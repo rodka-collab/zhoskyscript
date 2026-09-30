@@ -1,0 +1,60 @@
+-- положите обфусцированный код в файл script.lua в папке workspace вашего executor
+local base = getfenv(0)
+local realGame = game
+
+local function show(v)
+    if type(v) == "string" and #v > 300 then
+        return ("<string len=%d> %s..."):format(#v, v:sub(1, 300))
+    end
+    return tostring(v)
+end
+
+local function log(name, ...)
+    local t = table.pack(...)
+    for i = 1, t.n do t[i] = show(t[i]) end
+    print("CALL", name, table.concat(t, ", ", 1, t.n))
+end
+
+-- прокси для game: логируем методы (HttpGet и т.п.)
+local gameProxy = setmetatable({}, {
+    __index = function(_, k)
+        local v = realGame[k]
+        if type(v) == "function" then
+            return function(_, ...)
+                log("game:" .. k, ...)
+                if k == "HttpGet" or k == "HttpGetAsync" then
+                    return "" -- сеть не выполняем, только логируем URL
+                end
+                return v(realGame, ...)
+            end
+        end
+        return v
+    end,
+})
+
+local env = setmetatable({}, {
+    __index = function(_, k)
+        if k == "game" then return gameProxy end
+        local v = base[k]
+        if type(v) == "function" then
+            return function(...) log(k, ...) return v(...) end
+        end
+        return v
+    end,
+    __newindex = function(t, k, v)
+        print("SET", k, show(v))
+        rawset(t, k, v)
+    end,
+})
+
+local function capture(s, ...)
+    print("=== PAYLOAD ===\n" .. tostring(s) .. "\n=== END ===")
+    if setclipboard then pcall(setclipboard, tostring(s)) end
+    return function() end
+end
+env.loadstring = capture
+env.load = capture
+
+local f = loadstring(readfile("script.lua"))
+setfenv(f, env)
+f()
